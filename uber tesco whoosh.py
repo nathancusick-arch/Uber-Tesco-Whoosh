@@ -4,6 +4,7 @@ import hashlib
 import io
 import re
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 
@@ -51,7 +52,7 @@ REPORT_COLUMNS = [
 ]
 
 PARTNER_QUESTION = "Which partner company made your delivery?"
-SITE_NAME = "Uber Eats - Tesco Whoosh"
+SITE_NAME = "Tesco Whoosh"
 
 
 class ReportError(ValueError):
@@ -127,15 +128,18 @@ def values(frame: pd.DataFrame, *candidates: str) -> pd.Series:
     return result
 
 
-def reference_value(previous: pd.DataFrame, column: str, default: str = "") -> str:
-    """Carry stable report constants forward from the most recent report."""
-    if column not in previous.columns:
-        return default
-    non_blank = previous[column].fillna("").astype(str)
-    non_blank = non_blank[non_blank.str.strip().ne("")]
-    if non_blank.empty:
-        return default
-    return str(non_blank.mode().iloc[0])
+def normalise_number(value: str) -> str:
+    """Match the historic reports' minimal numeric formatting."""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        formatted = format(Decimal(text), "f")
+    except InvalidOperation:
+        return str(value)
+    if "." in formatted:
+        formatted = formatted.rstrip("0").rstrip(".")
+    return formatted
 
 
 def normalise_id_confirmation(frame: pd.DataFrame) -> pd.Series:
@@ -180,9 +184,14 @@ def generate_report(
         audit_export,
         [
             "order_internal_id",
+            "client_name",
             "internal_id",
             "site_internal_id",
             "site_name",
+            "site_address_2",
+            "site_address_3",
+            "site_post_code",
+            "site_code",
             "item_to_order",
             date_column,
             time_column,
@@ -200,6 +209,11 @@ def generate_report(
     visit_dates = pd.to_datetime(audit_export[date_column], dayfirst=True, errors="coerce")
     normalised_site = audit_export["site_name"].fillna("").astype(str).str.strip().str.casefold()
     normalised_partner = audit_export[PARTNER_QUESTION].fillna("").astype(str).str.strip().str.casefold()
+    if not normalised_site.eq(SITE_NAME.casefold()).any():
+        raise ReportError(
+            "The audit export does not contain Tesco Whoosh audits. "
+            "Upload the Tesco audit export rather than an Uber export."
+        )
     export_audit_ids = audit_export["internal_id"].fillna("").astype(str).str.strip()
     previously_reported_ids = set(
         previous_report["site_internal_id"].fillna("").astype(str).str.strip()
@@ -222,22 +236,22 @@ def generate_report(
 
     output = pd.DataFrame(index=selected.index)
     output["order_internal_id"] = values(selected, "order_internal_id")
-    output["internal_id"] = reference_value(previous_report, "internal_id", "Tesco")
+    output["internal_id"] = values(selected, "client_name")
     output["site_internal_id"] = values(selected, "internal_id")
     output["site_name"] = values(selected, "site_internal_id")
-    output["site_address_1"] = reference_value(previous_report, "site_address_1", "Tesco Whoosh")
-    output["site_address_2"] = reference_value(previous_report, "site_address_2", "")
-    output["site_address_3"] = reference_value(previous_report, "site_address_3", "")
-    output["site_post_code"] = reference_value(previous_report, "site_post_code", "GX11")
+    output["site_address_1"] = values(selected, "site_name")
+    output["site_address_2"] = values(selected, "site_address_2")
+    output["site_address_3"] = values(selected, "site_address_3")
+    output["site_post_code"] = values(selected, "site_post_code")
     output["item_to_order"] = values(selected, "item_to_order")
     output["date_of_visit"] = selected["__visit_date"].dt.strftime("%d/%m/%Y")
     output["time_of_visit"] = values(selected, time_column)
-    output["purchase_cost"] = reference_value(previous_report, "purchase_cost", "")
-    output["site_code"] = reference_value(previous_report, "site_code", "GX11")
+    output["purchase_cost"] = ""
+    output["site_code"] = values(selected, "site_code")
     output["primary_result"] = values(selected, "primary_result")
+    output["Were you able to successfully conduct this audit?"] = ""
 
     direct_questions = [
-        "Were you able to successfully conduct this audit?",
         "Please enter the date you placed your order:",
         PARTNER_QUESTION,
         "What is your age?",
@@ -266,9 +280,11 @@ def generate_report(
         selected,
         "What was the total cost of your purchase? ",
         "What was the total cost of your purchase?",
-    )
+    ).map(normalise_number)
     output["Please enter the order number from your online receipt:"] = values(
         selected,
+        "Please enter the order number (including any special characters):",
+        "Please enter the order number from your online receipt (including any special characters):",
         "Please enter the order number from your online receipt:",
         "Please enter your order number:",
     )
@@ -308,7 +324,7 @@ def main() -> None:
         "the next weekly CSV in the same 39-column format."
     )
 
-    audit_file = st.file_uploader("Upload audit export", type="csv")
+    audit_file = st.file_uploader("Upload Tesco audit export", type="csv")
     previous_file = st.file_uploader("Upload most recent report", type="csv")
 
     if audit_file is None or previous_file is None:
