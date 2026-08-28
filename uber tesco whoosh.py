@@ -200,12 +200,18 @@ def generate_report(
     visit_dates = pd.to_datetime(audit_export[date_column], dayfirst=True, errors="coerce")
     normalised_site = audit_export["site_name"].fillna("").astype(str).str.strip().str.casefold()
     normalised_partner = audit_export[PARTNER_QUESTION].fillna("").astype(str).str.strip().str.casefold()
+    export_audit_ids = audit_export["internal_id"].fillna("").astype(str).str.strip()
+    previously_reported_ids = set(
+        previous_report["site_internal_id"].fillna("").astype(str).str.strip()
+    )
+    previously_reported_ids.discard("")
 
     mask = (
         normalised_site.eq(SITE_NAME.casefold())
         & normalised_partner.eq("uber")
         & visit_dates.ge(pd.Timestamp(week_start))
         & visit_dates.lt(pd.Timestamp(report_date))
+        & ~export_audit_ids.isin(previously_reported_ids)
     )
     if "status" in audit_export.columns:
         mask &= audit_export["status"].fillna("").astype(str).str.strip().str.casefold().eq("approved")
@@ -298,7 +304,8 @@ def main() -> None:
     st.title("Uber Tesco Whoosh Weekly Report Generator")
     st.write(
         "Upload the audit export and the most recent Tesco Whoosh Uber report. "
-        "The app will create the next weekly CSV in the same 39-column format."
+        "The app will exclude audits already present in that report and create "
+        "the next weekly CSV in the same 39-column format."
     )
 
     audit_file = st.file_uploader("Upload audit export", type="csv")
