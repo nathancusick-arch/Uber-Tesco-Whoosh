@@ -209,6 +209,7 @@ def generate_report(
     visit_dates = pd.to_datetime(audit_export[date_column], dayfirst=True, errors="coerce")
     normalised_site = audit_export["site_name"].fillna("").astype(str).str.strip().str.casefold()
     normalised_partner = audit_export[PARTNER_QUESTION].fillna("").astype(str).str.strip().str.casefold()
+    normalised_result = audit_export["primary_result"].fillna("").astype(str).str.strip().str.casefold()
     if not normalised_site.eq(SITE_NAME.casefold()).any():
         raise ReportError(
             "The audit export does not contain Tesco Whoosh audits. "
@@ -223,6 +224,7 @@ def generate_report(
     mask = (
         normalised_site.eq(SITE_NAME.casefold())
         & normalised_partner.eq("uber")
+        & normalised_result.ne("abort")
         & visit_dates.ge(pd.Timestamp(week_start))
         & visit_dates.lt(pd.Timestamp(report_date))
         & ~export_audit_ids.isin(previously_reported_ids)
@@ -300,7 +302,7 @@ def generate_report(
 
 
 def report_to_csv_bytes(report: pd.DataFrame) -> bytes:
-    return report.to_csv(index=False, lineterminator="\r\n").encode("utf-8")
+    return report.to_csv(index=False, lineterminator="\r\n").encode("utf-8-sig")
 
 
 def input_fingerprint(audit_bytes: bytes, previous_bytes: bytes, previous_name: str) -> str:
@@ -320,8 +322,8 @@ def main() -> None:
     st.title("Uber Tesco Whoosh Weekly Report Generator")
     st.write(
         "Upload the audit export and the most recent Tesco Whoosh Uber report. "
-        "The app will exclude audits already present in that report and create "
-        "the next weekly CSV in the same 39-column format."
+        "The app will exclude aborts and audits already present in that report, "
+        "then create the next weekly CSV in the same 39-column format."
     )
 
     audit_file = st.file_uploader("Upload Tesco audit export", type="csv")
